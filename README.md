@@ -42,9 +42,15 @@ In order to get a syntax template for a command (COMMAND) please execute the fol
 Currently implemented functionality for the command prompt use is listed below:
 
 `get_radar_status` provides basic information about the current radar activity.
+
 `start_radar_measurements` starts radar measurement using a MDF file on the host PC.
+
 `start_radar_measurements_local_mdf` starts radar measurements using a MDF located on the user PC (MDF is not copied to the host).
+
 `terminate_radar_measurements` stops currently running radar measurements.
+
 `get_mdf_list` provides a list of MDF files available on the host PC in the default folder.
+
 `get_radar_id` provides information about the radar.
+
 `install_local_mdf` copies an MDF from the user PC to the host PC. The MDF is not started.
