@@ -1194,7 +1194,6 @@ class MeasDefFile:
             frames = [[0, len(scans), 1]]
         framecount = len(frames)
         framestarts = [frame[0] for frame in frames]
-
         # warn that it never includes the scan 0 indicating an issue
         if min(framestarts) > 0:
             print('Scan numbering starts at index 0, which was not found',
@@ -1230,19 +1229,32 @@ class MeasDefFile:
             # header type for scantype 1, scanmode refers to continuous
             self.__write_to_file(output_file, 'b', [scanmode])
             # this is the ScanCnt
+
             self.__write_to_file(output_file, 'i', [len(scans)])
-            self.__write_to_file(output_file, 'f', [self.ScanStartEl,
-                                                    self.ScanStopEl,
-                                                    self.ScanIncEl,
-                                                    self.ScanSpeedEl,
-                                                    self.ScanStartAz,
-                                                    self.ScanStopAz,
-                                                    self.ScanIncAz,
-                                                    self.ScanSpeedAz])
+            self.__write_to_file(output_file, 'f',
+                                 [scan.ScanStartEl for scan in scans])
+            self.__write_to_file(output_file, 'f',
+                                 [scan.ScanStopEl for scan in scans])
+            self.__write_to_file(output_file, 'f',
+                                 [scan.ScanIncEl for scan in scans])
+            self.__write_to_file(output_file, 'f',
+                                 [scan.ScanSpeedEl for scan in scans])
+            self.__write_to_file(output_file, 'f',
+                                 [scan.ScanStartAz for scan in scans])
+            self.__write_to_file(output_file, 'f',
+                                 [scan.ScanStopAz for scan in scans])
+            self.__write_to_file(output_file, 'f',
+                                 [scan.ScanIncAz for scan in scans])
+            self.__write_to_file(output_file, 'f',
+                                 [scan.ScanSpeedAz for scan in scans])
 
-            self.__write_to_file(output_file, 'b', self.AzWindAlign)
+            self.__write_to_file(output_file, 'f',
+                                 [scan.ScanSpeedAz for scan in scans])
 
-            self.__write_to_file(output_file, 'i', framecount)
+            self.__write_to_file(output_file, 'b',
+                                 [scan.AzWindAlign for scan in scans])
+
+            self.__write_to_file(output_file, 'i', [framecount])
             self.__write_to_file(output_file, 'i', framestarts)
             self.__write_to_file(output_file, 'i', framestops)
             self.__write_to_file(output_file, 'i', [frame[2] for frame in frames])
@@ -1257,7 +1269,9 @@ class MeasDefFile:
         # timing can either be False or True
         if timing is False:
             self.__write_to_file(output_file, 'i', [duration, len(basename)])
-            self.__write_to_file(output_file, 'i', [basename])
+            self.__write_to_file(output_file, 'b',
+                                 [i for i in basename.encode('UTF-8')]
+                                 )
         elif timing:
             self.__write_to_file(output_file, 'i', [filelen])
 
