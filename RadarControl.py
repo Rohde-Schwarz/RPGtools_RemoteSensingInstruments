@@ -1140,6 +1140,7 @@ class MeasDefFile:
                # comment spirrobe: start = False (=0) means immediately
                start=False,
                start_time=0,
+               # unclear how to support the ignore date, ignore hour
                trig=0,
                LV0=True,
                LV1=True,
@@ -1217,8 +1218,8 @@ class MeasDefFile:
         # order so we have to adjust this accordingly here.
         self.__write_to_file(output_file,
                              'b',
-                             [scan.ScanType for scan in scans])
-
+                             [scantype])
+        # scan.ScanType for scan in scans])
         if scantype == 0:
             self.__write_to_file(output_file, 'f',
                                  [scan.ConstEl for scan in scans])
@@ -1229,8 +1230,9 @@ class MeasDefFile:
             # header type for scantype 1, scanmode refers to continuous
             self.__write_to_file(output_file, 'b', [scanmode])
             # this is the ScanCnt
-
             self.__write_to_file(output_file, 'i', [len(scans)])
+
+            # elevation related 4 params
             self.__write_to_file(output_file, 'f',
                                  [scan.ScanStartEl for scan in scans])
             self.__write_to_file(output_file, 'f',
@@ -1239,6 +1241,8 @@ class MeasDefFile:
                                  [scan.ScanIncEl for scan in scans])
             self.__write_to_file(output_file, 'f',
                                  [scan.ScanSpeedEl for scan in scans])
+
+            # azimuth related 4 params
             self.__write_to_file(output_file, 'f',
                                  [scan.ScanStartAz for scan in scans])
             self.__write_to_file(output_file, 'f',
@@ -1248,9 +1252,7 @@ class MeasDefFile:
             self.__write_to_file(output_file, 'f',
                                  [scan.ScanSpeedAz for scan in scans])
 
-            self.__write_to_file(output_file, 'f',
-                                 [scan.ScanSpeedAz for scan in scans])
-
+            # elevation related 4 params
             self.__write_to_file(output_file, 'b',
                                  [scan.AzWindAlign for scan in scans])
 
@@ -1267,12 +1269,13 @@ class MeasDefFile:
         self.__write_to_file(output_file, 'b', [timing])
 
         # timing can either be False or True
-        if timing is False:
-            self.__write_to_file(output_file, 'i', [duration, len(basename)])
+        if timing == 0:
+            self.__write_to_file(output_file, 'i', [duration])
+            self.__write_to_file(output_file, 'i', [len(basename)])
             self.__write_to_file(output_file, 'b',
-                                 [i for i in basename.encode('UTF-8')]
+                                 [ord(i) for i in basename]
                                  )
-        elif timing:
+        elif timing == 1:
             self.__write_to_file(output_file, 'i', [filelen])
 
         self.__write_to_file(output_file, 'b', [start])
@@ -1419,7 +1422,6 @@ class MeasDefFile:
             self.ScanIncAz = []
             self.ScanSpeedAz = []
             self.AzWindAlign = []
-
             # 8 vars for each scan to be read, 4 elv, 4 az
             scandata = [[R._read_float() for j in range(self.ScanCnt)]
                         for i in range(8)]
@@ -1441,11 +1443,12 @@ class MeasDefFile:
             self.AzWindAlign.extend([R._read_byte()
                                     for j in range(self.ScanCnt)])
 
+
+
             # comment spirrobe
             # maybe this needs to be refactored to in case there are
             # several frames. requires testing.
             self.FrameCnt = R._read_int()
-
             self.FrameStartScn = []
             self.FrameStopScn = []
             self.FrameRep = []
@@ -1458,18 +1461,16 @@ class MeasDefFile:
                                   for j in range(self.FrameCnt)])
 
         self.Timing = R._read_byte()
-
         if self.Timing == 0:
-
             self.Duration = R._read_int()
-            self.BaseNmLen, self.BaseNm = R._read_int(), R._read_string()
+            self.BaseNmLen = R._read_int()
+            self.BaseNm = ''.join([chr(R._read_byte())
+                                   for j in range(self.BaseNmLen)])
 
         elif self.Timing == 1:
-
             self.FileLen = R._read_int()
 
         self.MeasStart = R._read_byte()
-
         if self.MeasStart == 1:
 
             self.StartTime = R._read_int()
@@ -1479,20 +1480,22 @@ class MeasDefFile:
         # comment spirrobe:
         # is this really the ADCVoltRng in an RPG FMCW?
         # here in the RPG FMCW it is always 1000 (see also .create method)
-        # is this an internal scaling factor? what does it scale?
         self.ADCVoltRng = R._read_int()
-        self.extra = R._read_signed_short()
-
-        # comment spirrobe:
-        # this was the number I found during testing, as I do not know
-        # what the 256 stands for in this case there could be other cases
-        # where something else is defined in the MDF.
-        if self.extra == 256:
-            self.BaseNmLen, self.BaseNm = R._read_int(), R._read_string()
 
         if R._ByteReader__i == R._ByteReader__input.__len__():
-            print('Finished processing {filepath}')
+            print(f'Finished processing {filepath}')
         else:
+            # this is pure guesswork based on making different MDF files via
+            # the gui
+            self.extra = R._read_signed_short()
+
+            # comment spirrobe:
+            # this was the number I found during testing, as I do not know
+            # what the 256 stands for in this case there could be other cases
+            # where something else is defined in the MDF.
+            if self.extra == 256:
+                self.BaseNmLen, self.BaseNm = R._read_int(), R._read_string()
+
             print(f'{R._ByteReader__i} bytes of',
                   f'{R._ByteReader__input.__len__()} bytes read')
             print(f'{R._ByteReader__input[R._ByteReader__i:]} remains')
