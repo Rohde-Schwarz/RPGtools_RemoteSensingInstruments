@@ -208,6 +208,8 @@ def scan_generic(elevation_init,
                  # the calibration interval (abs. cal.). be aware that once
                  # this is running the scan cannot be aborted
                  calibration_interval=1,
+                 reporting=True
+                 reportinterval=5,
                  once=False,
                  quiet=True,
                  dryrun=True):
@@ -359,7 +361,11 @@ def scan_generic(elevation_init,
             ensure_start(c, WORKDIR+mdffilename)
             time.sleep(max([5, movementtime]))
             time.sleep(10)
-            report(c, duration + 1, sleeptime=10)
+            if reporting:
+                report(c, duration + 1, sleeptime=reportinterval)
+            else:
+                time.sleep(duration + 1)
+
             time.sleep(AFTERSCANWAIT)
         except KeyboardInterrupt:
             print('Stopping scanning operation...')
