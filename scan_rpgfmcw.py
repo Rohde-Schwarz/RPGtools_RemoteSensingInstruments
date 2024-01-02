@@ -208,7 +208,7 @@ def scan_generic(elevation_init,
                  # the calibration interval (abs. cal.). be aware that once
                  # this is running the scan cannot be aborted
                  calibration_interval=1,
-                 reporting=True
+                 reporting=True,
                  reportinterval=5,
                  once=False,
                  quiet=True,
