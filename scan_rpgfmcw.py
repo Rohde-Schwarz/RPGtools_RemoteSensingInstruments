@@ -65,18 +65,30 @@ AFTERSCANWAIT = 5
 t0 = datetime.datetime(2001, 1, 1)
 
 
-def report(client, duration, sleeptime=1):
-    for i in np.arange((duration/sleeptime) + 1):
-        _sample = client.get_last_sample()
-        dts = (datetime.timedelta(seconds=_sample.samp_t),
-               datetime.timedelta(seconds=_sample.samp_ms/10**6))
-        st = t0 + dts[0] + dts[1]
-        print('Time of sample:', st)
-        print('Current elevation:',
-              _sample.elv, _sample.inc_el, _sample.inc_elax)
-        print('Current azimuth:',
-              _sample.azm, _sample.inc_elax, )
-        time.sleep(sleeptime)
+def report(client, duration=None, sleeptime=1):
+    start = datetime.datetime.now(datetime.UTC)
+    if isinstance(duration, float) or isinstance(duration, int):
+        duration = datetime.timedelta(seconds=duration)
+
+    try:
+        while True:
+            _sample = client.get_last_sample()
+            dts = (datetime.timedelta(seconds=_sample.samp_t),
+                   datetime.timedelta(seconds=_sample.samp_ms/10**6))
+            st = t0 + dts[0] + dts[1]
+            print('Time of sample:', st)
+            print('Current elevation:',
+                  _sample.elv, _sample.inc_el, _sample.inc_elax)
+            print('Current azimuth:',
+                  _sample.azm, _sample.inc_elax, )
+
+            now = datetime.datetime.utcnow()
+            if duration is not None and (now - start) > duration:
+                break
+            time.sleep(sleeptime)
+
+    except KeyboardInterrupt:
+        return
 
 
 def ensure_termination(client,
@@ -106,8 +118,8 @@ def ensure_termination(client,
         _status = client.get_radar_status()
         # print('Current status after termination command:', _status.__dict__)
         if cnt * retrytime >= timeout:
-            print(f'Measurement could not be terminated in {
-                  cnt*retrytime} seconds, use GUI')
+            print('Measurement could not be terminated in ',
+                  f'{cnt*retrytime} seconds, use GUI')
             return
 
     # to ensure there is enough time for the radar to react
@@ -154,8 +166,8 @@ def ensure_start(client,
 
         # print('Current status after termination command:', _status.__dict__)
         if cnt * retrytime >= timeout:
-            print(f'Measurement could not be started in {
-                  cnt} seconds, use GUI')
+            print(f'Measurement could not be started in ',
+                  f'{cnt} seconds, use GUI')
             return
 
     # to ensure there is enough time for the radar to react
@@ -166,17 +178,19 @@ def scan_rhi(elevation_init,
              elevation_end,
              azimuth,
              **kwargs):
-    scan_generic(elevation_init, elevation_end, azimuth, azimuth,
-                 once=True,
-                 **kwargs)
+    mdffile = make_scan_mdf(elevation_init, elevation_end, azimuth, azimuth,
+                            once=True,
+                            **kwargs)
+    return scan(mdffile, **kwargs)
 
 
 def scan_ppi(elevation,
              **kwargs):
     azimuth_init, azimuth_end = 0 + NORTHOFFSET, 359.99 + NORTHOFFSET
-    scan_generic(elevation, elevation, azimuth_init, azimuth_end,
-                 once=True,
-                 **kwargs)
+    mdffile = make_scan_mdf(elevation, elevation, azimuth_init, azimuth_end,
+                            once=True,
+                            **kwargs)
+    return scan(mdffile, **kwargs)
 
 
 def scan_elevation(elevation_init,
@@ -184,44 +198,38 @@ def scan_elevation(elevation_init,
                    azimuth,
                    **kwargs):
 
-    scan_generic(elevation_init, elevation_end, azimuth, azimuth, **kwargs)
+    mdffile = make_scan_mdf(elevation_init, elevation_end,
+                            azimuth, azimuth, **kwargs)
+    return scan(mdffile, **kwargs)
 
 
 def scan_azimuth(azimuth_init,
                  azimuth_end,
                  elevation,
                  **kwargs):
-    scan_generic(elevation, elevation, azimuth_init, azimuth_end, **kwargs)
+    mdffile = make_scan_mdf(elevation, elevation,
+                            azimuth_init, azimuth_end,
+                            **kwargs)
+    return scan(mdffile, **kwargs)
 
 
-def scan_generic(elevation_init,
-                 elevation_end,
-                 azimuth_init,
-                 azimuth_end,
-                 # at which speed to scan
-                 scanspeed=SCANSPEED,
-                 # at which speed to move
-                 fastspeed=FASTSPEED,
-                 # this is the LOWER scantime, as it will be updated
-                 # to match an even number of scans with the given speed/angle
-                 duration=DURATION,
-                 # the calibration interval (abs. cal.). be aware that once
-                 # this is running the scan cannot be aborted
-                 calibration_interval=1,
-                 reporting=True,
-                 reportinterval=5,
-                 once=False,
-                 quiet=True,
-                 dryrun=True):
-    try:
-        c = Client(*CONFIG, SuppressOutput=quiet)
-    except:
-        print('Error connecting to data server, returning ...')
-        print('Is the CLIENT running (on this computer).',
-              'We need the data server to forward commands ...')
-        return
+def make_scan_mdf(elevation_init,
+                  elevation_end,
+                  azimuth_init,
+                  azimuth_end,
+                  # at which speed to scan
+                  scanspeed=SCANSPEED,
+                  # at which speed to move
+                  fastspeed=FASTSPEED,
+                  # this is the LOWER scantime, as it will be updated
+                  # to match an even number of scans with the given speed/angle
+                  duration=DURATION,
+                  # the calibration interval (abs. cal.). be aware that once
+                  # this is running the scan cannot be aborted
+                  calibration_interval=1,
+                  once=False,
+                  **kwargs):
 
-#
     if (azimuth_init == azimuth_end or elevation_init == elevation_end):
         if azimuth_init == azimuth_end:
             # rhi like scan, movement in azi is fast
@@ -314,29 +322,52 @@ def scan_generic(elevation_init,
     if once:
         SCANS = SCANS[:1]
 
-    m = MeasDefFile()
-
     if once:
         frames = [[0, 0, 1]]
     else:
         frames = [[0, 1, int(np.ceil(nscans/2))]]
 
+    m = MeasDefFile()
+
+    m.create(WORKDIR + mdffilename,
+             CHIRPPRG,
+             SCANS,
+             frames=frames,
+             duration=duration,
+             filelen=onescanduration,
+             cal_int=calibration_interval,
+             )
+    m.read(WORKDIR + mdffilename)
+    print(f'Made {WORKDIR+mdffilename}:')
+    m.output()
+    return WORKDIR + mdffilename
+
+
+def scan(mdffile,
+         reporting=True,
+         reportinterval=5,
+         quiet=True,
+         dryrun=True,
+         **kwargs):
+
+    m = MeasDefFile()
+    m.read(mdffile)
+
     if dryrun:
-        m.create(WORKDIR + mdffilename,
-                 CHIRPPRG,
-                 SCANS,
-                 frames=frames,
-                 duration=duration,
-                 filelen=onescanduration,
-                 cal_int=calibration_interval,
-                 )
-        m.read(WORKDIR + mdffilename)
-        print(f'Made {WORKDIR+mdffilename}:')
         m.output()
         # os.remove(WORKDIR + f)
+        return mdffile
     else:
-        radar_id = c.get_radar_id()
-        radar_status = c.get_radar_status()
+        try:
+            client = Client(*CONFIG, SuppressOutput=quiet)
+        except:
+            print('Error connecting to data server, returning ...')
+            print('Is the CLIENT running (on this computer).',
+                  'We need the data server to forward commands ...')
+            return
+
+        radar_id = client.get_radar_id()
+        radar_status = client.get_radar_status()
         if 'mdf_name' in radar_status.__dict__:
             oldmdf = radar_status.mdf_name
         else:
@@ -347,30 +378,22 @@ def scan_generic(elevation_init,
 
         print(f'Radar is currently running {oldmdf}\n')
         try:
-            print(f'A Running {WORKDIR+mdffilename}:')
+            print(f'A Running {mdffile}:')
             # m.create(WORKDIR + f, CHIRPPRG, SCAN_FORTH, duration=duration)
-            m.create(WORKDIR + mdffilename,
-                     CHIRPPRG,
-                     SCANS,
-                     frames=frames,
-                     duration=duration,
-                     filelen=onescanduration,
-                     cal_int=calibration_interval,
-                     )
-            m.read(WORKDIR + mdffilename)
-            ensure_start(c, WORKDIR+mdffilename)
-            time.sleep(max([5, movementtime]))
-            time.sleep(10)
+            ensure_start(client, mdffile)
+
             if reporting:
-                report(c, duration + 1, sleeptime=reportinterval)
+                report(client,
+                       duration=m.Duration + 1,
+                       sleeptime=reportinterval)
             else:
-                time.sleep(duration + 1)
+                time.sleep(m.Duration + 1)
 
             time.sleep(AFTERSCANWAIT)
         except KeyboardInterrupt:
             print('Stopping scanning operation...')
         finally:
-            c.terminate_radar_measurements()
+            client.terminate_radar_measurements()
 
         print('Scan finished (see above if successful).')
 
@@ -380,33 +403,34 @@ def scan_generic(elevation_init,
             # ensure_termination(c)
             time.sleep(10)
             # c.terminate_radar_measurements()
-            ensure_start(c, oldmdf)
+            ensure_start(client, oldmdf)
 
         # ensure some wait before killing the client when not in dryrun
         time.sleep(5)
-    return c
+        return client
     # del c
 
 
 if __name__ == '__main__':
     pass
     # a half rhi at positioner 0° to avoid unneccessary movement for testing
-    client = scan_elevation(90, 60,
+    result = scan_elevation(90, 60,
                             NORTHOFFSET,
                             duration=20,
                             # dryrun=False,
                             dryrun=True,
                             quiet=True)
 
-    client = scan_ppi(85,
-                       dryrun=False,
+    result = scan_ppi(85,
+                      # dryrun=False,
                       # dryrun=True,
                       quiet=False)
 
-    client = scan_rhi(10, 170, NORTHOFFSET,
-                      # dryrun=False,
-                       dryrun=True,
-                      quiet=True)
+    # result = scan_rhi(10, 170,
+    #                   NORTHOFFSET,
+    #                   # dryrun=False,
+    #                   dryrun=True,
+    #                   quiet=True)
 
     # make some MBF file from all MDFs you have.
     # mbf = MeasBatchFile()
