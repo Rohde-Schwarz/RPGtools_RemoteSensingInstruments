@@ -62,30 +62,67 @@ AFTERSCANWAIT = 5
 ##################################
 ### RPG SPECIFIC SETTINGS ###
 ##################################
-t0 = datetime.datetime(2001, 1, 1)
+t0 = datetime.datetime(2001, 1, 1, tzinfo=datetime.UTC)
+asec = datetime.timedelta(seconds=1)
+amin = 60 * asec
 
 
-def report(client, duration=None, sleeptime=1):
+def _ts2dt(seconds, milliseconds=0):
+    if seconds is None:
+        return None
+    dts = (datetime.timedelta(seconds=seconds),
+           datetime.timedelta(seconds=milliseconds/10**6))
+    return t0 + dts[0] + dts[1]
+
+
+# get current measurement time from sample
+def _get_cmt(sample):
+    return _ts2dt(sample.samp_t, milliseconds=sample.samp_ms)
+
+
+# get end of measurement from sample
+def _get_eom(sample):
+    eom = getattr(sample, 'end_of_meas', None)
+    if eom is None:
+        return None
+    return _ts2dt(eom)
+
+
+def report(client, duration=None, reportfrequency=1):
     start = datetime.datetime.now(datetime.UTC)
     if isinstance(duration, float) or isinstance(duration, int):
         duration = datetime.timedelta(seconds=duration)
 
+    cnt = 0
     try:
         while True:
             _sample = client.get_last_sample()
-            dts = (datetime.timedelta(seconds=_sample.samp_t),
-                   datetime.timedelta(seconds=_sample.samp_ms/10**6))
-            st = t0 + dts[0] + dts[1]
-            print('Time of sample:', st)
-            print('Current elevation:',
-                  _sample.elv, _sample.inc_el, _sample.inc_elax)
-            print('Current azimuth:',
-                  _sample.azm, _sample.inc_elax, )
+            cmt = _get_cmt(_sample)
+            print('Time of sample:', cmt)
+            print('Current elevation/elv speed:',
+                  f'{_sample.elv:4.3}°, {_sample.inc_el:3.3}°/s'
+                  )
+            print('Current azimuth/az speed:',
+                  f'{_sample.azm:4.3}°, {_sample.inc_elax:3.3}°/s'
+                  )
+            print('Current min, mean and max ZE:',
+                  f'{np.nanmin(_sample.ze):3.3} dBZ',
+                  f'{np.nanmean(_sample.ze):3.3} dBZ',
+                  f'{np.nanmax(_sample.ze):3.3} dBZ'
+                  )
 
-            now = datetime.datetime.utcnow()
+            now = datetime.datetime.now(datetime.UTC)
             if duration is not None and (now - start) > duration:
                 break
-            time.sleep(sleeptime)
+
+            eom = _get_eom(_sample)
+
+            if eom is not None and now > (eom + 10 * asec):
+                print(f'Ending reporting as {eom} has passed {now}')
+                break
+
+            time.sleep(reportfrequency)
+            cnt += 1
 
     except KeyboardInterrupt:
         return
@@ -266,7 +303,7 @@ def make_scan_mdf(elevation_init,
         nscans = int(np.ceil(nscans))
         # these have to be symmetrical, so always needs to be an even number
         if nscans % 2 != 0:
-            print('Adding another scancycle to return radar to zenith')
+            print('Adding another scancycle to achieve even number of scans')
             nscans += 1
 
         duration = int(nscans * onescanduration) + movementtime
@@ -277,7 +314,7 @@ def make_scan_mdf(elevation_init,
           '(This was rounded up to match the next higher duration for n scans)')
 
     if azimuth_init == azimuth_end:
-        mdffilename = 'ELEVATION_SCAN.MDF' if not once else 'RHI_SCAN.MDF'
+        mdffilename = 'SCAN_ELEVATION.MDF' if not once else 'SCAN_RHI.MDF'
         # elevation scan
         # the first scan going down
         SCAN_FORTH = Scan(elv=elevation_init,
@@ -298,7 +335,7 @@ def make_scan_mdf(elevation_init,
     elif elevation_init == elevation_end:
         # maybe a bit of a misnomer but follows the CLOUDLAB nomenclature
         # from the miras
-        mdffilename = 'SECTOR_SCAN.MDF' if not once else 'PPI_SCAN.MDF'
+        mdffilename = 'SCAN_SECTOR.MDF' if not once else 'SCAN_PPI.MDF'
         # azimuth/sector scan
         # the first scan going down
         SCAN_FORTH = Scan(elv=elevation_init,
@@ -380,18 +417,23 @@ def scan(mdffile,
         try:
             print(f'A Running {mdffile}:')
             # m.create(WORKDIR + f, CHIRPPRG, SCAN_FORTH, duration=duration)
-            ensure_start(client, mdffile)
+            # ensure_start(client, mdffile)
+            client.terminate_radar_measurements()
+            time.sleep(3)
+            client.start_radar_measurements_local_mdf(mdffile)
 
             if reporting:
                 report(client,
                        duration=m.Duration + 1,
-                       sleeptime=reportinterval)
+                       reportfrequency=reportinterval)
             else:
                 time.sleep(m.Duration + 1)
 
-            time.sleep(AFTERSCANWAIT)
+            client.start_radar_measurements(oldmdf)
+            # time.sleep(AFTERSCANWAIT)
+
         except KeyboardInterrupt:
-            print('Stopping scanning operation...')
+            print('Stopping scanning operation manually...')
         finally:
             client.terminate_radar_measurements()
 
@@ -401,14 +443,12 @@ def scan(mdffile,
             print(f'Installing previous MDF: {oldmdf}')
             # time.sleep(15)
             # ensure_termination(c)
-            time.sleep(10)
+            # time.sleep(10)
             # c.terminate_radar_measurements()
-            ensure_start(client, oldmdf)
+            # ensure_start(client, oldmdf)
+            client.start_radar_measurements(oldmdf)
 
-        # ensure some wait before killing the client when not in dryrun
-        time.sleep(5)
         return client
-    # del c
 
 
 if __name__ == '__main__':
