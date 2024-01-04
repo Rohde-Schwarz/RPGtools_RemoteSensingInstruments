@@ -9,6 +9,7 @@ import time
 import sys
 import glob
 import datetime
+import warnings
 import numpy as np
 
 from RPGtools_RemoteSensingInstruments.RadarControl import (Scan,
@@ -22,6 +23,7 @@ from RPGtools_RemoteSensingInstruments.RadarControl import (Scan,
                                                             install_local_mdf)
 
 WORKDIR = os.path.abspath('.')
+WORKDIR = r'C:\RPG-FMCW-H\MDF_MBF'
 WORKDIR = WORKDIR if WORKDIR.endswith(os.sep) else WORKDIR + os.sep
 
 ##################################
@@ -88,7 +90,10 @@ def _get_eom(sample):
     return _ts2dt(eom)
 
 
-def report(client, duration=None, reportfrequency=1):
+def report(client,
+           duration=None,
+           reportfrequency=1,
+           break_on_eom=False):
     start = datetime.datetime.now(datetime.UTC)
     if isinstance(duration, float) or isinstance(duration, int):
         duration = datetime.timedelta(seconds=duration)
@@ -105,11 +110,19 @@ def report(client, duration=None, reportfrequency=1):
             print('Current azimuth/az speed:',
                   f'{_sample.azm:4.3}°, {_sample.inc_elax:3.3}°/s'
                   )
-            print('Current min, mean and max ZE:',
-                  f'{np.nanmin(_sample.ze):3.3} dBZ',
-                  f'{np.nanmean(_sample.ze):3.3} dBZ',
-                  f'{np.nanmax(_sample.ze):3.3} dBZ'
-                  )
+            # so we do not have to see the empty slice warnings for nans
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                print('Current min, mean and max ZE:',
+                      f'{np.nanmin(_sample.ze):5.3} dBZ',
+                      f'{np.nanmean(_sample.ze):5.3} dBZ',
+                      f'{np.nanmax(_sample.ze):5.3} dBZ'
+                      )
+                print('Current min, mean and max SLDR:',
+                      f'{np.nanmin(_sample.sldr):5.3} dB',
+                      f'{np.nanmean(_sample.sldr):5.3} dB',
+                      f'{np.nanmax(_sample.sldr):5.3} dB'
+                      )
 
             now = datetime.datetime.now(datetime.UTC)
             if duration is not None and (now - start) > duration:
@@ -117,7 +130,7 @@ def report(client, duration=None, reportfrequency=1):
 
             eom = _get_eom(_sample)
 
-            if eom is not None and now > (eom + 10 * asec):
+            if eom is not None and break_on_eom and now > (eom + 10 * asec):
                 print(f'Ending reporting as {eom} has passed {now}')
                 break
 
@@ -235,19 +248,19 @@ def scan_elevation(elevation_init,
                    azimuth,
                    **kwargs):
 
-    mdffile = make_scan_mdf(elevation_init, elevation_end,
-                            azimuth, azimuth, **kwargs)
-    return scan(mdffile, **kwargs)
+    mdffiles = make_scan_mdf(elevation_init, elevation_end,
+                             azimuth, azimuth, **kwargs)
+    return scan(mdffiles, **kwargs)
 
 
 def scan_azimuth(azimuth_init,
                  azimuth_end,
                  elevation,
                  **kwargs):
-    mdffile = make_scan_mdf(elevation, elevation,
-                            azimuth_init, azimuth_end,
-                            **kwargs)
-    return scan(mdffile, **kwargs)
+    mdffiles = make_scan_mdf(elevation, elevation,
+                             azimuth_init, azimuth_end,
+                             **kwargs)
+    return scan(mdffiles, **kwargs)
 
 
 def make_scan_mdf(elevation_init,
@@ -265,6 +278,13 @@ def make_scan_mdf(elevation_init,
                   # this is running the scan cannot be aborted
                   calibration_interval=1,
                   once=False,
+                  # make a mdffile for each unique scanpattern to allow
+                  # for easier postprocessing
+                  seperatemdffiles=True,
+                  # overwrite the basename in the beginning of the file
+                  # TODO: Test if we can pass in \..\ or similar to get to
+                  # another directory on the radar PC :-)
+                  basename=None,
                   **kwargs):
 
     if (azimuth_init == azimuth_end or elevation_init == elevation_end):
@@ -308,13 +328,26 @@ def make_scan_mdf(elevation_init,
 
         duration = int(nscans * onescanduration) + movementtime
 
-    print(f'The scanrange of {elevation_init}° to {elevation_end}° with',
-          f'a speed of {scanspeed} results in',
-          f' {nscans} scans for {duration} seconds',
-          '(This was rounded up to match the next higher duration for n scans)')
+    if once:
+        print(f'The scanrange of {elevation_init}° to {elevation_end}° with',
+              f'a speed of {scanspeed} results in a duration of {duration} seconds',
+              )
 
+    else:
+        if azimuth_init == azimuth_end:
+            print(f'The scanrange of {elevation_init}° to {elevation_end}° with',
+                  f'a speed of {scanspeed} results in',
+                  f' {nscans} scans for {duration} seconds',
+                  '(This may have been rounded up to create an even scan number)')
+        elif elevation_init == elevation_end:
+            print(f'The scanrange of {azimuth_init}° to {azimuth_end}° with',
+                  f'a speed of {scanspeed} results in',
+                  f' {nscans} scans for {duration} seconds',
+                  '(This may have been rounded up to create an even scan number)')
     if azimuth_init == azimuth_end:
         mdffilename = 'SCAN_ELEVATION.MDF' if not once else 'SCAN_RHI.MDF'
+        if basename is None:
+            basename = 'ELEVATIONSCAN' if not once else 'RHISCAN'
         # elevation scan
         # the first scan going down
         SCAN_FORTH = Scan(elv=elevation_init,
@@ -336,6 +369,8 @@ def make_scan_mdf(elevation_init,
         # maybe a bit of a misnomer but follows the CLOUDLAB nomenclature
         # from the miras
         mdffilename = 'SCAN_SECTOR.MDF' if not once else 'SCAN_PPI.MDF'
+        if basename is None:
+            basename = 'SECTORSCAN' if not once else 'PPISCAN'
         # azimuth/sector scan
         # the first scan going down
         SCAN_FORTH = Scan(elv=elevation_init,
@@ -359,41 +394,71 @@ def make_scan_mdf(elevation_init,
     if once:
         SCANS = SCANS[:1]
 
-    if once:
+    if once or seperatemdffiles:
         frames = [[0, 0, 1]]
     else:
         frames = [[0, 1, int(np.ceil(nscans/2))]]
 
     m = MeasDefFile()
+    if seperatemdffiles:
+        mdffiles = []
 
-    m.create(WORKDIR + mdffilename,
-             CHIRPPRG,
-             SCANS,
-             frames=frames,
-             duration=duration,
-             filelen=onescanduration,
-             cal_int=calibration_interval,
-             )
-    m.read(WORKDIR + mdffilename)
-    print(f'Made {WORKDIR+mdffilename}:')
-    m.output()
-    return WORKDIR + mdffilename
+        for SCANNO, SCAN in enumerate(SCANS):
+            _mdffilename = mdffilename.replace('.MDF', f'{SCANNO}.MDF')
+            m.create(WORKDIR + _mdffilename,
+                     CHIRPPRG,
+                     SCAN,
+                     frames=frames,
+                     duration=onescanduration,
+                     filelen=onescanduration,
+                     cal_int=calibration_interval,
+                     basename=basename,
+                     )
+            m.read(WORKDIR + _mdffilename)
+            print(f'Made {WORKDIR+_mdffilename}:')
+            m.output()
+            mdffiles.append(WORKDIR + _mdffilename)
+        # simply repeat the list entry of mdf files the
+        # number of scans/2 so we can just use the same mdffiles again
+        # and know how many times they should be made.
+        mdffiles = mdffiles * int(np.ceil(nscans/2))
+        return mdffiles
+    else:
+        m.create(WORKDIR + mdffilename,
+                 CHIRPPRG,
+                 SCANS,
+                 frames=frames,
+                 duration=duration,
+                 filelen=onescanduration,
+                 cal_int=calibration_interval,
+                 basename=basename,
+                 )
+        m.read(WORKDIR + mdffilename)
+        print(f'Made {WORKDIR+mdffilename}:')
+        m.output()
+        return WORKDIR + mdffilename
 
 
-def scan(mdffile,
+def scan(mdffile_or_list_of_mdffiles,
          reporting=True,
          reportinterval=5,
          quiet=True,
          dryrun=True,
          **kwargs):
 
+    if isinstance(mdffile_or_list_of_mdffiles, str):
+        mdffiles = [mdffile_or_list_of_mdffiles]
+    else:
+        mdffiles = mdffile_or_list_of_mdffiles
+
     m = MeasDefFile()
-    m.read(mdffile)
 
     if dryrun:
-        m.output()
+        for mdffile in mdffiles:
+            m.read(mdffile)
+            m.output()
         # os.remove(WORKDIR + f)
-        return mdffile
+        return mdffiles
     else:
         try:
             client = Client(*CONFIG, SuppressOutput=quiet)
@@ -415,19 +480,21 @@ def scan(mdffile,
 
         print(f'Radar is currently running {oldmdf}\n')
         try:
-            print(f'A Running {mdffile}:')
             # m.create(WORKDIR + f, CHIRPPRG, SCAN_FORTH, duration=duration)
-            # ensure_start(client, mdffile)
-            client.terminate_radar_measurements()
-            time.sleep(3)
-            client.start_radar_measurements_local_mdf(mdffile)
+            # made this way so that each scan of a mdflist has a
+            # unique data file
+            for mdfno, mdffile in enumerate(mdffiles):
+                print(f'Running {mdffile}, {mdfno} of {len(mdffiles)}')
+                m.read(mdffile)
+                ensure_start(client, mdffile)
+                if reporting:
+                    report(client,
+                           duration=m.Duration + 3,
+                           reportfrequency=reportinterval)
+                else:
+                    time.sleep(m.Duration + 3)
 
-            if reporting:
-                report(client,
-                       duration=m.Duration + 1,
-                       reportfrequency=reportinterval)
-            else:
-                time.sleep(m.Duration + 1)
+                # client.terminate_radar_measurements()
 
             client.start_radar_measurements(oldmdf)
             # time.sleep(AFTERSCANWAIT)
@@ -441,10 +508,6 @@ def scan(mdffile,
 
         if oldmdf is not None:
             print(f'Installing previous MDF: {oldmdf}')
-            # time.sleep(15)
-            # ensure_termination(c)
-            # time.sleep(10)
-            # c.terminate_radar_measurements()
             # ensure_start(client, oldmdf)
             client.start_radar_measurements(oldmdf)
 
