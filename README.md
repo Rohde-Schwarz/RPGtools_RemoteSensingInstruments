@@ -54,3 +54,47 @@ Currently implemented functionality for the command prompt use is listed below:
 `get_radar_id` provides information about the radar.
 
 `install_local_mdf` copies an MDF from the user PC to the host PC. The MDF is not started.
+
+### scan_rpgfmcw.py
+
+This module contains utilities/examples to conduct scans. The following scanpatterns are implements/available:
+- PPI scan with a mandatory elevation input
+- RHI scan with mandatory azimuth, and elevation (init and end)
+- repeated RHI scans similar to the above RHI scan with a duration keyword. Generally, a forth and a back RHI are conducted, i.e. the number of scans is even
+- repeated partial PPI (sector/azimuth) scans with a given elevation and azimuth (init and end) for a selectable duration
+
+The former two are standard scans and should not require additional information. The latter two are meant to be repeatable (and reduced for the sector scans) RHI/PPI scans to better track changes over time. Generally, the `scan_generic` function is the central function and all other functions are shallow wrappers around it as the logic is similar for all scans it is located in `scan_generic` rather than the single scans. Each scan returns the original Client from RadarControl.py to allow changes afterwards. 
+
+**At the start of the file several configuration parameters are available that should be checked and adjusted, especially the scan speeds and the north angle**
+
+The working principle is to create a MDF files with a set number of frame repetitions (number of scans that fit in duration / 2) which is then sent to the data server (which communicates with the radar). After a scan has been conducted, the previous MDF file is reinstalled (no support for MBF reinstallation yet). Dryrun creates MDF files without starting/sending them, e.g. for error checking. Dryrun is set to True per default to allow checking of the approach before.
+
+#### Example
+```
+# set your own for the specific location, this should be set 
+NORTHOFFSET = 0
+# Does a rhi scan of 30° (for illustration) for 20 seconds
+# (this gets rounded up to 30 seconds to fit the anglerange (30° movement) with
+# a default scanspeed of 1°/s)
+client = scan_elevation(90, 60,
+                        NORTHOFFSET,
+                        duration=20,
+                        dryrun=True,
+                        quiet=True)
+
+# PPI scan, simply choose the elevation at which to conduct
+client = scan_ppi(85,
+                  dryrun=True,
+                  quiet=False)
+
+# RHI scan from 10 to 170° elevation at the NORTH offset
+client = scan_rhi(10, 170, NORTHOFFSET,
+                  dryrun=True,
+                  quiet=True)
+```
+
+#### Issues
+Currently, the termination/ensuring start of the scan sometimes faces issues, when 
+- the original MDF has been restarted and has a long zero calibration value a repetition of the scan won't work
+- the reporting of the values during the scanning sometimes indicates weird time stamps, mainly when for some reason the same MDF gets restarted.
+
