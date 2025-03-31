@@ -561,7 +561,24 @@ class LastSample(ByteReader):
         self.__defauls_dv = 0.04 # [m/s]
         
         self.__read_last_sample()
+
+    def __check_connection(self):
         
+        self.connection = ByteReader._read_byte(self)      
+        
+        if self.connection == 0:
+            if self.__suppressout == False:
+                print('The HOST is not connected to the radar')
+            return False
+        
+        if self.connection != 1:
+            if self.__suppressout == False:
+                print('Invalid responce')
+            return False
+        
+        if self.__suppressout == False:
+            print('The HOST is connected to the radar')
+        return True        
         
     def __check_running_measurements(self):
         
@@ -582,6 +599,9 @@ class LastSample(ByteReader):
         return True
         
     def __read_last_sample(self):
+
+        if self.__check_connection() == False:
+            return
         
         if self.__check_running_measurements() == False:
             return
